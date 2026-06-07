@@ -21,8 +21,8 @@ def train_model(epochs=10, batch_size=128, learning_rate=1e-4, resume=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print("Đang tải Dữ liệu thô Shopee Price Match Guarantee...")
-    csv_path = '/kaggle/input/shopee-product-matching/train.csv'
-    img_dir = '/kaggle/input/shopee-product-matching/train_images/'
+    csv_path = '/kaggle/input/competitions/shopee-product-matching/train.csv'
+    img_dir = '/kaggle/input/competitions/shopee-product-matching/train_images'
 
     train_dataset = ShopeeRawTripletDataset(csv_file=csv_path, img_dir=img_dir)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
