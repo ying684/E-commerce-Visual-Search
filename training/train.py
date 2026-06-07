@@ -37,7 +37,7 @@ def train_model(epochs=10, batch_size=128, learning_rate=1e-4, resume=False):
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # NÂNG CẤP 2 & 3: Khởi tạo Bộ giảm LR và Scaler cho Mixed Precision
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
     scaler = GradScaler() 
 
     os.makedirs('outputs', exist_ok=True)
@@ -86,6 +86,9 @@ def train_model(epochs=10, batch_size=128, learning_rate=1e-4, resume=False):
         
         # Cập nhật Scheduler
         scheduler.step(epoch_loss)
+        # In ra Learning Rate hiện tại để dễ theo dõi (thay thế cho tham số verbose)
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"[*] Learning Rate hiện hành: {current_lr:.6f}")
 
         state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
         torch.save({
