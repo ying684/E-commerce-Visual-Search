@@ -64,8 +64,8 @@ def extract_embeddings(dataloader, model, device):
 
 def main():
     # Khai báo cấu hình Kaggle
-    csv_path = '/kaggle/input/shopee-product-matching/train.csv'
-    img_dir = '/kaggle/input/shopee-product-matching/train_images/'
+    csv_path = '/kaggle/input/competitions/shopee-product-matching/train.csv'
+    img_dir = '/kaggle/input/competitions/shopee-product-matching/train_images/'
     model_path = '/kaggle/working/E-commerce-Visual-Search/outputs/best_cbir_model.pth'
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
