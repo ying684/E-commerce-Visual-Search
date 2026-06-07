@@ -1,3 +1,5 @@
+# File: evaluation/evaluate.py
+
 import sys
 import os
 import torch
@@ -96,6 +98,9 @@ def main():
     # Sử dụng IndexFlatL2 cho độ chính xác tuyệt đối (Exhaustive Search)
     faiss_index = faiss.IndexFlatL2(dimension)
     faiss_index.add(embeddings)
+    faiss.write_index(faiss_index, '/kaggle/working/E-commerce-Visual-Search/outputs/faiss_database.index')
+    print("Đã lưu FAISS Index xuống ổ cứng (faiss_database.index)")
+
     print(f"Đã nạp {faiss_index.ntotal} vector vào không gian tìm kiếm.")
     
     # 5. MÔ PHỎNG TRUY VẤN (QUERY) VÀ TÍNH RECALL
