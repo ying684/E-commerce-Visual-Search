@@ -14,57 +14,64 @@ from torch.utils.data import DataLoader
 from preprocessing.triplet_dataset import FashionMNISTTriplet
 from models.backbone import CBIRBackbone
 from models.loss import TripletMarginLoss
+from preprocessing.real_world_dataset import CrossDomainTripletDataset
 
 # Tăng batch_size lên 64 để tận dụng tối đa 2 GPU
-def train_model(epochs=5, batch_size=64, learning_rate=1e-4):
+
+def train_model(epochs=5, batch_size=64, learning_rate=1e-4, resume=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Đang khởi động pipeline huấn luyện...")
-
-    # 1. Khởi tạo DataLoader
-    print("Đang tải dữ liệu...")
-    train_dataset = FashionMNISTTriplet(train=True)
-    # Tăng num_workers lên 4 để CPU bơm data nhanh hơn cho 2 GPU
+    
+    print("Đang tải dữ liệu thực tế (Shopee Dataset)...")
+    csv_path = '../input/shopee-product-matching/train.csv' # Đường dẫn mặc định của Kaggle
+    img_dir = '../input/shopee-product-matching/train_images/'
+    
+    train_dataset = CrossDomainTripletDataset(csv_file=csv_path, img_dir=img_dir)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-
-    # 2. Khởi tạo Model
     model = CBIRBackbone(model_name='resnet50', embedding_dim=256)
-
-    # BẬT CHẾ ĐỘ MULTI-GPU NẾU PHÁT HIỆN NHIỀU HƠN 1 CARD
     if torch.cuda.device_count() > 1:
-        print(f"Tuyệt vời! Phát hiện {torch.cuda.device_count()} GPUs. Đang kích hoạt DataParallel...")
-        # Lớp bọc này sẽ tự động chia nhỏ batch data gửi tới 2 card và gom gradient lại
         model = nn.DataParallel(model)
-
-    # Đẩy mô hình lên device (GPU(s) hoặc CPU)
     model = model.to(device)
 
     criterion = TripletMarginLoss(margin=1.0)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     os.makedirs('outputs', exist_ok=True)
+    
+    start_epoch = 0
     best_loss = float('inf')
+    checkpoint_path = 'outputs/checkpoint_latest.pth'
 
-    # 3. Vòng lặp huấn luyện chính
-    for epoch in range(epochs):
+    # CƠ CHẾ RESUME TRAINING
+    if resume and os.path.exists(checkpoint_path):
+        print(f"[*] Tìm thấy file checkpoint. Đang khôi phục trạng thái huấn luyện...")
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        # Phục hồi Model
+        if isinstance(model, nn.DataParallel):
+            model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            
+        # Phục hồi Optimizer và các thông số
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_loss = checkpoint['best_loss']
+        print(f"[+] Đã phục hồi thành công! Tiếp tục huấn luyện từ Epoch {start_epoch + 1}")
+
+    print("Đang khởi động quá trình huấn luyện...")
+    for epoch in range(start_epoch, epochs):
         model.train()
         running_loss = 0.0
 
         for batch_idx, (anchor, positive, negative, _) in enumerate(train_loader):
-            anchor = anchor.to(device)
-            positive = positive.to(device)
-            negative = negative.to(device)
+            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
 
             optimizer.zero_grad()
-
-            emb_anchor = model(anchor)
-            emb_positive = model(positive)
-            emb_negative = model(negative)
-
+            emb_anchor, emb_positive, emb_negative = model(anchor), model(positive), model(negative)
             loss, _, _ = criterion(emb_anchor, emb_positive, emb_negative)
-
+            
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item()
 
             if batch_idx % 50 == 0:
@@ -73,14 +80,21 @@ def train_model(epochs=5, batch_size=64, learning_rate=1e-4):
         epoch_loss = running_loss / len(train_loader)
         print(f"==> Kết thúc Epoch {epoch+1} | Average Loss: {epoch_loss:.4f}")
 
-        # LƯU MÔ HÌNH THÔNG MINH: Bóc tách DataParallel trước khi lưu
+        # LƯU CHECKPOINT SAU MỖI EPOCH (Để có thể resume)
+        state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': state_dict,
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_loss': best_loss
+        }, checkpoint_path)
+
+        # LƯU MODEL TỐT NHẤT (Dùng cho Inference sau này)
         if epoch_loss < best_loss:
             best_loss = epoch_loss
-            
-            # Nếu model đang bọc trong DataParallel, lấy model.module
-            state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
             torch.save(state_dict, 'outputs/best_cbir_model.pth')
-            print(">>> Đã cập nhật và lưu mô hình tốt nhất tại outputs/best_cbir_model.pth\n")
+            print(">>> Đã cập nhật mô hình tốt nhất (best_cbir_model.pth)\n")
 
 if __name__ == "__main__":
-    train_model(epochs=5)
+    # Đổi resume=True để kích hoạt tính năng đọc lại checkpoint nếu có
+    train_model(epochs=10, resume=True)
