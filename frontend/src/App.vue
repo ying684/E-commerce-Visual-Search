@@ -48,7 +48,7 @@
           
           <div v-for="item in results" :key="item.posting_id" class="bg-white rounded-xl shadow-sm hover:shadow-xl transition-all overflow-hidden border border-gray-100 group">
             <div class="h-56 w-full bg-white flex items-center justify-center p-2 border-b border-gray-50 overflow-hidden">
-               <img :src="`http://127.0.0.1:8000/images/${item.image_filename}`" class="max-h-full object-contain group-hover:scale-105 transition-transform duration-300" />
+               <img :src="item.image_url" class="max-h-full object-contain group-hover:scale-105 transition-transform duration-300" />
             </div>
             
             <div class="p-4 bg-gray-50">

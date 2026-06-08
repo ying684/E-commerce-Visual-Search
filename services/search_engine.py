@@ -1,3 +1,5 @@
+# search_engine.py - Implements the VisualSearchEngine class for image-based search functionality
+
 import torch
 import faiss
 import pandas as pd
@@ -35,9 +37,13 @@ class VisualSearchEngine:
         results = []
         for i in range(top_k):
             idx = indices[0][i]
+            # Lấy tên file ảnh chính xác (có đuôi .jpg) từ file CSV
+            image_filename = self.df['image'].iloc[idx] 
+            
             results.append({
                 "rank": i + 1,
                 "posting_id": self.df['posting_id'].iloc[idx],
+                "image_url": f"http://127.0.0.1:8000/images/{image_filename}", # Ghép URL
                 "distance": float(distances[0][i])
             })
         return results

@@ -1,3 +1,5 @@
+# app.py - Main application file for the Pro E-commerce Search API
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

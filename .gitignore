@@ -32,6 +32,8 @@ outputs/
 # =========================
 data/
 dummy_data/
+images/
+*.csv
 *.ipynb_checkpoints/
 *.index
 
