@@ -1,6 +1,10 @@
+fastapi
+uvicorn
 torch
 torchvision
-numpy
-matplotlib
+faiss-gpu
 pandas
-faiss-cpu
+numpy
+pillow
+tqdm
+python-multipart

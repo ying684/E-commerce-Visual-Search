@@ -1,4 +1,4 @@
-# search_engine.py - Implements the VisualSearchEngine class for image-based search functionality
+# search_engine.py
 
 import torch
 import faiss
@@ -30,20 +30,25 @@ class VisualSearchEngine:
         tensor = self.transform(img).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
+            # Vector xuất ra đã tự động được L2 Normalize nhờ hàm F.normalize trong CBIRBackbone
             vector = self.model(tensor).cpu().numpy().astype('float32')
             
-        distances, indices = self.index.search(vector, top_k)
+        # similarities: Độ tương đồng Cosine (Càng gần 1 càng giống)
+        similarities, indices = self.index.search(vector, top_k)
         
         results = []
         for i in range(top_k):
             idx = indices[0][i]
-            # Lấy tên file ảnh chính xác (có đuôi .jpg) từ file CSV
             image_filename = self.df['image'].iloc[idx] 
+            
+            # Chuyển đổi Độ tương đồng thành Khoảng cách (Sai số) để khớp logic Frontend
+            # Dùng max(0.0, ...) để tránh trường hợp số âm cực nhỏ do sai số dấu phẩy động
+            distance = max(0.0, 1.0 - float(similarities[0][i]))
             
             results.append({
                 "rank": i + 1,
                 "posting_id": self.df['posting_id'].iloc[idx],
-                "image_url": f"http://127.0.0.1:8000/images/{image_filename}", # Ghép URL
-                "distance": float(distances[0][i])
+                "image_url": f"http://127.0.0.1:8000/images/{image_filename}",
+                "distance": distance
             })
         return results
