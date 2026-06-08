@@ -1,3 +1,5 @@
+# core/config.py
+
 import os
 
 class Settings:

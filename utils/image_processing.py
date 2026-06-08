@@ -1,3 +1,5 @@
+# utils/image_processing.py
+
 from PIL import Image
 
 def process_image(image_path):
