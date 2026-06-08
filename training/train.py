@@ -10,99 +10,117 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler # <--- Import AMP
+from torch.cuda.amp import autocast, GradScaler
 
-from preprocessing.real_world_dataset import ShopeeRawTripletDataset
+# Import các vũ khí hạng nặng chúng ta vừa chế tạo
+from preprocessing.real_world_dataset import ShopeeArcFaceDataset
 from models.backbone import CBIRBackbone
-from models.loss import TripletMarginLoss
+from models.loss import ArcFaceLoss
+from evaluation.evaluate import evaluate_model
+from utils.logger import TrainingLogger
 
-# Tăng batch_size lên 128 vì đã có AMP giải phóng VRAM
-def train_model(epochs=10, batch_size=128, learning_rate=1e-4, resume=False):
+# ==========================================
+# CẤU HÌNH ĐƯỜNG DẪN (Dễ dàng đổi khi lên Kaggle)
+# ==========================================
+TRAIN_CSV = 'data/train_split.csv'
+VAL_CSV = 'data/val_split.csv'
+IMG_DIR = 'images/'  # KHI LÊN KAGGLE ĐỔI THÀNH: '/kaggle/input/shopee-product-matching/train_images'
+
+def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[*] Đang chạy trên thiết bị: {device}")
+
+    # 1. Chuẩn bị Dữ liệu
+    print("[*] Đang tải dữ liệu...")
+    train_dataset = ShopeeArcFaceDataset(csv_file=TRAIN_CSV, img_dir=IMG_DIR)
+    val_dataset = ShopeeArcFaceDataset(csv_file=VAL_CSV, img_dir=IMG_DIR)
     
-    print("Đang tải Dữ liệu thô Shopee Price Match Guarantee...")
-    csv_path = '/kaggle/input/competitions/shopee-product-matching/train.csv'
-    img_dir = '/kaggle/input/competitions/shopee-product-matching/train_images'
+    num_classes = train_dataset.num_classes
+    print(f"[*] Số lượng mặt hàng (Classes) dùng để Train: {num_classes}")
 
-    train_dataset = ShopeeRawTripletDataset(csv_file=csv_path, img_dir=img_dir)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4 if torch.cuda.is_available() else 0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4 if torch.cuda.is_available() else 0)
 
+    # 2. Khởi tạo AI Core & ArcFace
     model = CBIRBackbone(model_name='resnet50', embedding_dim=256)
     if torch.cuda.device_count() > 1:
-        print(f"Kích hoạt DataParallel trên {torch.cuda.device_count()} GPUs...")
+        print(f"[*] Kích hoạt DataParallel trên {torch.cuda.device_count()} GPUs...")
         model = nn.DataParallel(model)
     model = model.to(device)
 
-    criterion = TripletMarginLoss(margin=1.0)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    # ArcFace cần biết số lượng class để tạo tâm (centers)
+    arcface = ArcFaceLoss(in_features=256, out_features=num_classes).to(device)
+    criterion = nn.CrossEntropyLoss()
+
+    # 3. Tối ưu hóa (LƯU Ý: Phải update trọng số của cả Model VÀ ArcFace)
+    optimizer = optim.AdamW([
+        {'params': model.parameters()},
+        {'params': arcface.parameters()}
+    ], lr=learning_rate, weight_decay=1e-4)
+
+    # Cosine Annealing dìm Learning Rate mượt mà từ cao xuống thấp
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    scaler = GradScaler()
     
-    # NÂNG CẤP 2 & 3: Khởi tạo Bộ giảm LR và Scaler cho Mixed Precision
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
-    scaler = GradScaler() 
-
+    # Công cụ ghi chép Bằng chứng học thuật
     os.makedirs('outputs', exist_ok=True)
-    start_epoch = 0
-    best_loss = float('inf')
-    checkpoint_path = 'outputs/checkpoint_latest.pth'
+    logger = TrainingLogger(save_path='outputs/training_history.csv')
 
-    if resume and os.path.exists(checkpoint_path):
-        print("[*] Khôi phục trạng thái huấn luyện từ Checkpoint...")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        if isinstance(model, nn.DataParallel):
-            model.module.load_state_dict(checkpoint['model_state_dict'])
-        else:
-            model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        best_loss = checkpoint['best_loss']
-        scheduler.load_state_dict(checkpoint.get('scheduler_state_dict', scheduler.state_dict()))
+    best_map = 0.0
 
-    print("Bắt đầu Pipeline Huấn luyện AI Core (Tối ưu AMP)...")
-    for epoch in range(start_epoch, epochs):
+    print("\n" + "="*50)
+    print(" BẮT ĐẦU PIPELINE HUẤN LUYỆN (ARCFACE + GEM POOLING)")
+    print("="*50)
+
+    for epoch in range(epochs):
         model.train()
+        arcface.train()
         running_loss = 0.0
 
-        for batch_idx, (anchor, positive, negative, _) in enumerate(train_loader):
-            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+        for batch_idx, (images, labels, _, _) in enumerate(train_loader):
+            images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
 
-            # KÍCH HOẠT AMP (Ép chạy Float16 để tăng tốc)
             with autocast():
-                emb_anchor, emb_positive, emb_negative = model(anchor), model(positive), model(negative)
-                loss, _, _ = criterion(emb_anchor, emb_positive, emb_negative)
-            
-            # Scaler xử lý gradient chống tràn số lượng nhỏ
+                # Ép ảnh thành vector
+                embeddings = model(images)
+                # Đẩy vector và nhãn vào không gian góc của ArcFace
+                arcface_outputs = arcface(embeddings, labels)
+                # Tính Loss phân loại
+                loss = criterion(arcface_outputs, labels)
+
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            
+
             running_loss += loss.item()
 
             if batch_idx % 50 == 0:
                 print(f"Epoch [{epoch+1}/{epochs}] | Batch [{batch_idx}/{len(train_loader)}] | Loss: {loss.item():.4f}")
 
         epoch_loss = running_loss / len(train_loader)
-        print(f"==> Kết thúc Epoch {epoch+1} | Average Loss: {epoch_loss:.4f}")
-        
-        # Cập nhật Scheduler
-        scheduler.step(epoch_loss)
-        # In ra Learning Rate hiện tại để dễ theo dõi (thay thế cho tham số verbose)
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"[*] Learning Rate hiện hành: {current_lr:.6f}")
+        
+        print(f"\n==> Đang làm bài Thi Cuối Kỳ (Validation) cho Epoch {epoch+1}...")
+        # Đánh giá bằng mAP@5 (Tiêu chuẩn đồ án)
+        val_map = evaluate_model(model, val_loader, device, k=5)
+        
+        print(f"KẾT QUẢ EPOCH {epoch+1}:")
+        print(f" - Train Loss : {epoch_loss:.4f}")
+        print(f" - Val mAP@5  : {val_map:.4f}")
+        print(f" - L.Rate     : {current_lr:.6f}\n")
 
-        state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': state_dict,
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict(),
-            'best_loss': best_loss
-        }, checkpoint_path)
+        # Ghi log ra file CSV
+        logger.log(epoch+1, epoch_loss, val_map, current_lr)
 
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
+        # CHỐT: Chỉ lưu model khi mAP TĂNG LÊN (Năng lực tổng quát hóa tốt hơn)
+        if val_map > best_map:
+            best_map = val_map
+            state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
             torch.save(state_dict, 'outputs/best_cbir_model.pth')
-            print(">>> Đã cập nhật mô hình tốt nhất (best_cbir_model.pth)\n")
+            print(">>> 🎯 Đã cập nhật mô hình Đỉnh cao mới (best_cbir_model.pth)\n")
+
+        scheduler.step()
 
 if __name__ == "__main__":
-    train_model(epochs=15, resume=True) # Train 15 Epochs vì ta có Scheduler điều phối
+    train_model(epochs=10) # Với ArcFace, 10-15 Epoch là đủ lên đỉnh
