@@ -36,7 +36,8 @@ def evaluate_model(model, dataloader, device, k=5):
     
     print("\n[*] Đang trích xuất vector tập Validation để đánh giá...")
     with torch.no_grad():
-        for images, posting_ids, label_groups in tqdm(dataloader, desc="Extracting"):
+        # ĐÃ SỬA Ở ĐÂY: Thêm 'labels' vào để hứng đủ 4 giá trị từ ArcFace Dataset
+        for images, labels, posting_ids, label_groups in tqdm(dataloader, desc="Extracting"):
             images = images.to(device)
             embeddings = model(images).cpu().numpy()
             
