@@ -24,9 +24,9 @@ from utils.logger import TrainingLogger
 # ==========================================
 TRAIN_CSV = '/kaggle/input/datasets/nguynanhnhnl/spilit/train_split.csv'
 VAL_CSV = '/kaggle/input/datasets/nguynanhnhnl/spilit/val_split.csv'
-IMG_DIR = '/kaggle/input/competitions/shopee-product-matching/train_images'  # KHI LÊN KAGGLE ĐỔI THÀNH: '/kaggle/input/shopee-product-matching/train_images'
+IMG_DIR = '/kaggle/input/competitions/shopee-product-matching/train_images'
 
-def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
+def train_model(epochs=10, batch_size=64, learning_rate=3e-4, resume=True):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Đang chạy trên thiết bị: {device}")
 
@@ -48,31 +48,51 @@ def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
         model = nn.DataParallel(model)
     model = model.to(device)
 
-    # ArcFace cần biết số lượng class để tạo tâm (centers)
     arcface = ArcFaceLoss(in_features=256, out_features=num_classes).to(device)
     criterion = nn.CrossEntropyLoss()
 
-    # 3. Tối ưu hóa (LƯU Ý: Phải update trọng số của cả Model VÀ ArcFace)
+    # 3. Tối ưu hóa
     optimizer = optim.AdamW([
         {'params': model.parameters()},
         {'params': arcface.parameters()}
     ], lr=learning_rate, weight_decay=1e-4)
 
-    # Cosine Annealing dìm Learning Rate mượt mà từ cao xuống thấp
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     scaler = GradScaler()
     
-    # Công cụ ghi chép Bằng chứng học thuật
+    # 4. CƠ CHẾ KHÔI PHỤC (RESUME & CHECKPOINTING)
     os.makedirs('outputs', exist_ok=True)
     logger = TrainingLogger(save_path='outputs/training_history.csv')
-
+    checkpoint_path = 'outputs/checkpoint_latest.pth'
+    
+    start_epoch = 0
     best_map = 0.0
+
+    if resume and os.path.exists(checkpoint_path):
+        print(f"\n[!] TÌM THẤY CHECKPOINT. Đang khôi phục từ: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        # Load Model
+        if isinstance(model, nn.DataParallel):
+            model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            
+        # Load ArcFace, Optimizer, Scheduler
+        arcface.load_state_dict(checkpoint['arcface_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        start_epoch = checkpoint['epoch'] + 1
+        best_map = checkpoint['best_map']
+        print(f"[!] Đã khôi phục thành công! Tiếp tục train từ Epoch {start_epoch + 1}...\n")
 
     print("\n" + "="*50)
     print(" BẮT ĐẦU PIPELINE HUẤN LUYỆN (ARCFACE + GEM POOLING)")
     print("="*50)
 
-    for epoch in range(epochs):
+    # Vòng lặp bắt đầu từ start_epoch
+    for epoch in range(start_epoch, epochs):
         model.train()
         arcface.train()
         running_loss = 0.0
@@ -82,11 +102,8 @@ def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
             optimizer.zero_grad()
 
             with autocast():
-                # Ép ảnh thành vector
                 embeddings = model(images)
-                # Đẩy vector và nhãn vào không gian góc của ArcFace
                 arcface_outputs = arcface(embeddings, labels)
-                # Tính Loss phân loại
                 loss = criterion(arcface_outputs, labels)
 
             scaler.scale(loss).backward()
@@ -102,7 +119,6 @@ def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
         current_lr = optimizer.param_groups[0]['lr']
         
         print(f"\n==> Đang làm bài Thi Cuối Kỳ (Validation) cho Epoch {epoch+1}...")
-        # Đánh giá bằng mAP@5 (Tiêu chuẩn đồ án)
         val_map = evaluate_model(model, val_loader, device, k=5)
         
         print(f"KẾT QUẢ EPOCH {epoch+1}:")
@@ -110,17 +126,25 @@ def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
         print(f" - Val mAP@5  : {val_map:.4f}")
         print(f" - L.Rate     : {current_lr:.6f}\n")
 
-        # Ghi log ra file CSV
         logger.log(epoch+1, epoch_loss, val_map, current_lr)
 
-        # CHỐT: Chỉ lưu model khi mAP TĂNG LÊN (Năng lực tổng quát hóa tốt hơn)
+        # GHI CHECKPOINT LIÊN TỤC SAU MỖI EPOCH
+        state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': state_dict,
+            'arcface_state_dict': arcface.state_dict(), # Cực kỳ quan trọng
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'best_map': best_map
+        }, checkpoint_path)
+
         if val_map > best_map:
             best_map = val_map
-            state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
             torch.save(state_dict, 'outputs/best_cbir_model.pth')
             print(">>> 🎯 Đã cập nhật mô hình Đỉnh cao mới (best_cbir_model.pth)\n")
 
         scheduler.step()
 
 if __name__ == "__main__":
-    train_model(epochs=10) # Với ArcFace, 10-15 Epoch là đủ lên đỉnh
+    train_model(epochs=10, resume=True) # Mặc định bật Resume

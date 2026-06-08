@@ -48,10 +48,15 @@ def evaluate_model(model, dataloader, device, k=5):
     all_embeddings = np.vstack(all_embeddings).astype('float32')
     
     # Xây dựng index FAISS (Gallery)
-    res = faiss.StandardGpuResources() if torch.cuda.is_available() else None
     index = faiss.IndexFlatL2(all_embeddings.shape[1])
-    if res:
-        index = faiss.index_cpu_to_gpu(res, 0, index)
+    try:
+        if torch.cuda.is_available():
+            res = faiss.StandardGpuResources()
+            index = faiss.index_cpu_to_gpu(res, 0, index)
+    except AttributeError:
+        # Tự động Fallback: Nếu thư viện là faiss-cpu, hệ thống sẽ bỏ qua và chạy ngầm bằng CPU
+        pass 
+        
     index.add(all_embeddings)
     
     # Tìm kiếm (Query)
