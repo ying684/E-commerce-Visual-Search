@@ -22,9 +22,9 @@ from utils.logger import TrainingLogger
 # ==========================================
 # CẤU HÌNH ĐƯỜNG DẪN (Dễ dàng đổi khi lên Kaggle)
 # ==========================================
-TRAIN_CSV = 'data/train_split.csv'
-VAL_CSV = 'data/val_split.csv'
-IMG_DIR = 'images/'  # KHI LÊN KAGGLE ĐỔI THÀNH: '/kaggle/input/shopee-product-matching/train_images'
+TRAIN_CSV = '/kaggle/input/datasets/nguynanhnhnl/spilit/train_split.csv'
+VAL_CSV = '/kaggle/input/datasets/nguynanhnhnl/spilit/val_split.csv'
+IMG_DIR = '/kaggle/input/competitions/shopee-product-matching/train_images'  # KHI LÊN KAGGLE ĐỔI THÀNH: '/kaggle/input/shopee-product-matching/train_images'
 
 def train_model(epochs=10, batch_size=64, learning_rate=3e-4):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
