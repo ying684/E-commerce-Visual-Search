@@ -2,9 +2,10 @@ fastapi
 uvicorn
 torch
 torchvision
-faiss-gpu
+faiss-cpu
 pandas
 numpy
 pillow
 tqdm
 python-multipart
+scikit-learn
